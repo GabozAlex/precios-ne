@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { listProducts, type ProductResult } from '@/lib/api'
 
 const STORE_COLORS: Record<string, string> = {
@@ -97,18 +98,20 @@ function ProductCard({ product }: { product: ProductResult }) {
   )
 }
 
-export default function ProductosPage() {
+function ProductosContent() {
+  const searchParams = useSearchParams()
+  const storeParam = searchParams.get('store') || ''
   const [products, setProducts] = useState<ProductResult[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
 
   useEffect(() => {
     setLoading(true)
-    listProducts()
+    listProducts('', storeParam)
       .then(setProducts)
       .catch(() => setProducts([]))
       .finally(() => setLoading(false))
-  }, [])
+  }, [storeParam])
 
   const filtered = filter
     ? products.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
@@ -120,7 +123,11 @@ export default function ProductosPage() {
         <Link href="/" className="text-blue-600 hover:underline text-sm">
           &larr; Inicio
         </Link>
-        <h2 className="text-2xl font-bold mt-2">Todos los productos</h2>
+        <h2 className="text-2xl font-bold mt-2">
+          {storeParam
+            ? `Productos de ${STORE_LABELS[storeParam] || storeParam}`
+            : 'Todos los productos'}
+        </h2>
       </div>
 
       <input
@@ -169,5 +176,31 @@ export default function ProductosPage() {
         </>
       )}
     </div>
+  )
+}
+
+export default function ProductosPage() {
+  return (
+    <Suspense fallback={
+      <div>
+        <Link href="/" className="text-blue-600 hover:underline text-sm">&larr; Inicio</Link>
+        <h2 className="text-2xl font-bold mt-2">Productos</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 animate-pulse">
+              <div className="flex gap-3">
+                <div className="w-16 h-16 bg-gray-200 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-gray-200 rounded w-3/4" />
+                  <div className="h-3 bg-gray-200 rounded w-1/3" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    }>
+      <ProductosContent />
+    </Suspense>
   )
 }

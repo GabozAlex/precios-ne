@@ -43,9 +43,12 @@ export async function searchProducts(
   return res.json()
 }
 
-export async function listProducts(q = ''): Promise<ProductResult[]> {
-  const params = q ? `?q=${encodeURIComponent(q)}` : ''
-  const res = await fetch(`${API_URL}/api/products${params}`)
+export async function listProducts(q = '', store = ''): Promise<ProductResult[]> {
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  if (store) params.set('store', store)
+  const query = params.toString()
+  const res = await fetch(`${API_URL}/api/products${query ? `?${query}` : ''}`)
   if (!res.ok) throw new Error(`Error ${res.status}`)
   return res.json()
 }

@@ -52,6 +52,7 @@ class StoreOut(BaseModel):
 async def search(
     q: str = Query(..., min_length=1, description="Término de búsqueda"),
     force_refresh: bool = Query(False, description="Ignorar caché"),
+    store: str = Query("", description="Filtrar por tienda (damasco, multimax, daka, ivoo)"),
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
@@ -65,6 +66,8 @@ async def search(
             .where(Price.scraped_at >= datetime.fromtimestamp(cutoff, tz=timezone.utc))
             .limit(24)
         )
+        if store:
+            stmt = stmt.where(Price.store == store)
         result = await db.execute(stmt)
         cached_prices = result.scalars().all()
 
@@ -132,6 +135,9 @@ async def search(
         if isinstance(res, Exception):
             continue
         all_results.extend(res)
+
+    if store:
+        all_results = [r for r in all_results if r.get("store") == store]
 
     grouped: dict[str, dict] = {}
     for r in all_results:
@@ -234,6 +240,7 @@ async def search(
 async def list_products(
     db: AsyncSession = Depends(get_db),
     q: str = Query("", description="Filtrar por nombre"),
+    store: str = Query("", description="Filtrar por tienda (damasco, multimax, daka, ivoo)"),
 ):
     stmt = (
         select(Price)
@@ -242,6 +249,8 @@ async def list_products(
     )
     if q:
         stmt = stmt.where(Product.name.ilike(f"%{q}%"))
+    if store:
+        stmt = stmt.where(Price.store == store)
     result = await db.execute(stmt)
     prices = result.scalars().all()
 

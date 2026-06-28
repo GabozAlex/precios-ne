@@ -26,17 +26,18 @@ export default function Home() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full max-w-2xl mt-4">
         {[
-          { name: 'Damasco', color: 'bg-store-damasco' },
-          { name: 'Multimax', color: 'bg-store-multimax' },
-          { name: 'Daka', color: 'bg-store-daka' },
-          { name: 'Ivoo', color: 'bg-store-ivoo' },
+          { name: 'Damasco', key: 'damasco', color: 'bg-store-damasco' },
+          { name: 'Multimax', key: 'multimax', color: 'bg-store-multimax' },
+          { name: 'Daka', key: 'daka', color: 'bg-store-daka' },
+          { name: 'Ivoo', key: 'ivoo', color: 'bg-store-ivoo' },
         ].map((store) => (
-          <div
+          <Link
             key={store.name}
-            className={`${store.color} text-white rounded-lg p-4 text-center font-semibold shadow`}
+            href={`/productos?store=${store.key}`}
+            className={`${store.color} text-white rounded-lg p-4 text-center font-semibold shadow hover:opacity-80 transition-opacity`}
           >
             {store.name}
-          </div>
+          </Link>
         ))}
       </div>
 
