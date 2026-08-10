@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .next/
 node_modules/
+VARIABLES_RENDER.txt
