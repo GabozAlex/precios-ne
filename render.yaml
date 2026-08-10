@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: precios-ne
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: Dockerfile
+    plan: free
+    healthCheckPath: /docs
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,https://precios-ne.vercel.app
