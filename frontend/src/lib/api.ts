@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://precios-ne.onrender.com'
+const API_URL = 'https://precios-ne.onrender.com'
 
 export interface PriceInfo {
   store: string
