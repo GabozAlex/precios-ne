@@ -18,9 +18,12 @@ async def search_products(query: str, max_results: int = 50) -> list[dict[str, A
 
     products: list[dict] = []
     offset = 0
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    tokens = [t for t in query.lower().split() if t]
+    ft_term = tokens[0] if tokens else query
+    async with httpx.AsyncClient(timeout=20.0) as client:
         while len(products) < max_results:
             params = {
+                "ft": ft_term,
                 "q": query,
                 "_from": offset,
                 "_to": offset + 49,
@@ -30,10 +33,23 @@ async def search_products(query: str, max_results: int = 50) -> list[dict[str, A
             batch: list[dict] = r.json()
             if not batch:
                 break
-            products.extend(batch)
+            added = 0
+            for item in batch:
+                if _matches_query(item, tokens):
+                    products.append(item)
+                    added += 1
+            if added == 0 and offset > 0:
+                break
             offset += 50
 
     return [_parse_product(p) for p in products[:max_results]]
+
+
+def _matches_query(item: dict, tokens: list[str]) -> bool:
+    if not tokens:
+        return True
+    name = (item.get("productName", "")).lower()
+    return all(t in name for t in tokens)
 
 
 async def fetch_catalog(max_results: int = 2000) -> list[dict[str, Any]]:
