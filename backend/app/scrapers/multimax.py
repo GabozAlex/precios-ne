@@ -76,7 +76,10 @@ async def fetch_catalog(max_results: int = 4000) -> list[dict[str, Any]]:
 
 
 def _parse_price(text: str) -> float | None:
-    cleaned = text.replace("$", "").replace(" ", "").replace(",", ".")
+    cleaned = text.replace("$", "").replace("BS.", "").replace("USD", "").replace(" ", "").strip()
+    if not cleaned:
+        return None
+    cleaned = cleaned.replace(".", "").replace(",", ".")  # quitar miles, coma->punto
     match = re.search(r"(\d+\.?\d*)", cleaned)
     if match:
         return float(match.group(1))
@@ -147,3 +150,37 @@ async def _scrape_httpx(url: str, max_results: int) -> list[dict[str, Any]]:
             break
 
     return results
+
+
+async def fetch_detail(product_url: str) -> tuple[str | None, list[str]]:
+    """Fetch a product detail page: description + image gallery."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            r = await client.get(product_url, headers=headers)
+            r.raise_for_status()
+    except Exception:
+        return None, []
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    meta = soup.select_one('meta[name="description"]')
+    description = (meta.get("content") or "").strip() if meta else ""
+
+    images: list[str] = []
+    for img in soup.select('img[src*="medios/productos/"]'):
+        src = img.get("src", "")
+        if "-medium." not in src:
+            continue
+        if src not in images:
+            images.append(src)
+
+    return (description or None, images)

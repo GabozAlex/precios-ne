@@ -1,0 +1,4 @@
+# Dependencias solo para desarrollo/tests/migraciones (no en producción)
+alembic>=1.13.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

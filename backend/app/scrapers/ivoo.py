@@ -25,6 +25,8 @@ query searchProducts($search: String!, $pageSize: Int!) {
                 }
             }
             image { url label }
+            media_gallery { url }
+            description { html }
             stock_status
         }
     }
@@ -82,12 +84,22 @@ async def search_products(query: str, max_results: int = 24) -> list[dict[str, A
 
         img_data = item.get("image", {}) or {}
         image_url = img_data.get("url", "")
+        images = [g.get("url") for g in item.get("media_gallery", []) if g.get("url")]
+        if image_url and image_url not in images:
+            images.insert(0, image_url)
+        description_data = item.get("description", {}) or {}
+        description = description_data.get("html") or None
+        if description:
+            description = re.sub(r"<[^>]+>", " ", description)
+            description = re.sub(r"\s+", " ", description).strip()
 
         results.append({
             "name": name,
             "brand": "",
             "category": "",
+            "description": description,
             "image_url": image_url,
+            "images": images,
             "product_url": product_url,
             "store": STORE_KEY,
             "store_name": STORE_NAME,
@@ -115,6 +127,8 @@ query catalogProducts($page: Int!, $pageSize: Int!) {
                 }
             }
             image { url label }
+            media_gallery { url }
+            description { html }
             stock_status
         }
     }

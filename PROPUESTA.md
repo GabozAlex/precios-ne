@@ -36,19 +36,20 @@ Hacen que el consumidor tenga que visitar múltiples tiendas (físicas o virtual
 
 ## 4. Stack Tecnológico
 
-### Backend — Railway (Python)
+### Backend — Render (Python)
 
 | Componente | Tecnología |
 |------------|-----------|
 | Framework | **FastAPI** — API REST rápida, moderna, con documentación automática (Swagger) |
-| ORM | **SQLAlchemy** — Mapeo objeto-relacional para PostgreSQL |
-| DB | **PostgreSQL** — Base de datos relacional en Railway |
-| Scraping API | **httpx** — Cliente HTTP async para APIs REST (Damasco) |
-| Scraping Dinámico | **Playwright** — Navegador headless para sitios con JavaScript (Multimax, Daka, Ivoo) |
-| Async | **asyncio** — Operaciones concurrentes para scrapear múltiples tiendas |
-| Scheduler | **APScheduler** — Actualización periódica automática de precios |
+| ORM | **SQLAlchemy 2 (async)** — Mapeo objeto-relacional |
+| DB | **Supabase (PostgreSQL)** — Base de datos relacional en la nube |
 | Migraciones | **Alembic** — Control de versiones del esquema de base de datos |
-| Contenedor | **Docker** — Imagen con Python + Chromium para Playwright |
+| Scraping API | **httpx** — Cliente HTTP async (Damasco VTEX, Ivoo Magento GraphQL) |
+| Scraping HTML | **httpx + BeautifulSoup (lxml)** — SSR de Multimax y Daka |
+| Agrupación | **rapidfuzz** — agrupa el mismo producto entre tiendas |
+| Async | **asyncio** — Operaciones concurrentes para scrapear múltiples tiendas |
+| Scheduler | **cron-job.org → `POST /api/sync/catalog`** — actualización periódica del catálogo |
+| Contenedor | **Docker** — imagen Python 3.12 desplegada en Render |
 
 ### Frontend — Vercel (Next.js)
 
@@ -81,29 +82,30 @@ Hacen que el consumidor tenga que visitar múltiples tiendas (físicas o virtual
                           │ HTTPS / REST
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    BACKEND (Railway)                        │
+│                    BACKEND (Render)                         │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │              FastAPI (Python 3.12)                   │  │
-│  │  /api/search?q=nevera  →  busca + scrapea + ordena  │  │
-│  │  /api/products/{id}   →  historial de precios       │  │
-│  │  /api/refresh         →  fuerza actualización       │  │
+│  │  /api/search?q=nevera  →  busca + scrapea + agrupa   │  │
+│  │  /api/products{e?limit=}  →  paginado                │  │
+│  │  /api/products/{id}  →  historial + detalle (lazy)   │  │
+│  │  /api/suggest?q= →  autocompletado                   │  │
+│  │  /api/sync/catalog?store= →  sincronización (cron)   │  │
 │  └──────────────────────────────────────────────────────┘  │
-│                          │                                  │
 │          ┌───────────────┼───────────────┐                  │
 │          ▼               ▼               ▼                  │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐           │
 │  │  DAMASCO   │  │ MULTIMAX   │  │   DAKA     │           │
-│  │ (API VTEX) │  │(Playwright)│  │(Playwright)│           │
+│  │ (API VTEX) │  │ (httpx/BS4)│  │ (httpx/BS4)│           │
 │  └────────────┘  └────────────┘  └────────────┘           │
 │  ┌────────────┐                                            │
 │  │   IVOO     │                                            │
-│  │(Playwright)│                                            │
+│  │(GraphQL)   │                                            │
 │  └────────────┘                                            │
 │                          │                                  │
 │                          ▼                                  │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │              PostgreSQL (Railway)                    │  │
-│  │  products ── price_history ── stores                 │  │
+│  │           PostgreSQL (Supabase)                       │  │
+│  │  products ── prices ── price_history ── stores       │  │
 │  │  Caché de resultados para búsquedas repetidas        │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
@@ -206,40 +208,41 @@ Accept: application/json
 
 **Ventajas:** Rápido, sin JavaScript, sin bloqueo, datos estructurados.
 
-### 7.2 Multimax (Playwright)
+### 7.2 Multimax (SSR via httpx + BeautifulSoup)
 
-Multimax usa un sitio con renderizado híbrido. La estrategia:
+Multimax renderiza en servidor (Astro). Estrategia:
 
-1. Playwright navega a `https://multimax.com.ve/`
-2. Espera que cargue el DOM completo
-3. Extrae todos los productos visibles de la página principal
-4. Para buscar un producto específico, usa la URL de categorías:
-   - `https://multimax.com.ve/categoria-producto/refrigeracion/`
-   - `https://multimax.com.ve/categoria-producto/lavado/`
-5. Extrae: nombre, precio (selector `.price`), imagen, enlace
-6. Si el sitio carga vía JavaScript, esperar por `networkidle`
+1. `GET https://multimax.com.ve/buscar?q={query}&page={n}` con httpx
+2. Parsear con BeautifulSoup los `span[class*=tabular-nums]` (precio) y los
+   `a[href*="/producto/"][title]` (nombre/enlace)
+3. Extraer: nombre, precio (formato venezolano `1.000,00`), imagen, enlace
+4. Para el catálogo usa las URLs de categoría de `CATALOG_URLS`
+5. El detalle (`description` + galería) se obtiene bajo demanda:
+   `fetch_detail()` visita la página del producto y extrae el `meta[description]`
+   y las imágenes `cdn.multimax.com.ve/medios/productos/*-medium.webp`
 
-### 7.3 Daka (Playwright)
+### 7.3 Daka (SSR via httpx + BeautifulSoup)
 
-Daka tiene rutas como:
-- `https://daka.tiendasdaka.com/ve/store/electrodomesticos`
-- `https://daka.tiendasdaka.com/ve/store/search?q=nevera`
+Daka usa rutas como:
+- `https://tiendasdaka.com/ve/store/electrodomesticos`
+- `https://tiendasdaka.com/ve/results/{slug}?q={query}&page={n}`
 
 Estrategia:
-1. Navegar a URL de búsqueda
-2. Esperar que carguen los productos (pueden tardar por JS)
-3. Extraer nombre, precio (USD y Bs), imagen, enlace
-4. Manejar paginación si es necesario
+1. HTTP GET con httpx (SSR) + BeautifulSoup sobre `[data-testid="product-wrapper"]`
+2. Extraer nombre, marca, precio (USD y Bs), imagen (`/_next/image`), enlace
+3. Manejar paginación si es necesario
+4. El detalle se obtiene bajo demanda con `fetch_detail()`: la sección
+   "Descripción" de la página y las imágenes de producto
+   (`*.cloudfront.net/<SKU>_<N>-<hash>.webp`)
 
-### 7.4 Ivoo (Playwright)
+### 7.4 Ivoo (Magento 2 GraphQL)
 
-Ivoo es una SPA (Single Page Application). Estrategia:
-1. Navegar a `https://www.ivoo.com/searchpage`
-2. Esperar que la app React renderice completamente
-3. Usar selectores para encontrar productos
-4. Extraer datos
+Ivoo expone GraphQL público en `nuweapp.com/graphql`. Estrategia:
 
-**Alternativa:** Revisar si la app móvil de Ivoo expone una API que podamos usar directamente (endpoints como `api.ivoo.com`).
+1. `POST nuweapp.com/graphql` con la query `searchProducts` (o `catalogProducts`)
+2. Campos: `name`, `price_range.minimum_price`, `image`, `media_gallery`,
+   `description.html`, `url_key`, `stock_status`
+3. Sin navegador, respuestas JSON estructuradas
 
 ---
 
@@ -310,6 +313,19 @@ Historial de precios de un producto específico.
 
 Lista las tiendas configuradas y su estado.
 
+### `GET /api/suggest`
+
+Autocompletado: `?q=nevera` → `{"suggestions": ["NEVERA DAMASCO ...", ...]}` (10).
+
+### `GET /api/products` (paginado)
+
+`?q=&store=&limit=50&offset=0` → `{ "total": 123, "page": 1, "page_size": 50, "products": [...] }`.
+
+> Todos los `ProductOut` incluyen `images: string[]` y `description` (los de
+> Multimax/Daka se llenan bajo demanda al abrir `GET /api/products/{id}`).
+> Los resultados de `/api/search` agrupan por similitud (rapidfuzz ≥ 82) el
+> mismo producto entre tiendas.
+
 ---
 
 ## 9. Frontend — Componentes
@@ -371,12 +387,16 @@ Usar similitud de texto (fuzzy matching) para agrupar el mismo producto en disti
 
 ## 12. Despliegue
 
-### Railway (Backend)
-```dockerfile
-FROM python:3.12-slim
-RUN apt-get update && apt-get install -y chromium chromium-driver
-RUN pip install -r requirements.txt
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+### Render (Backend)
+```yaml
+# render.yaml (deploy por Git)
+services:
+  - type: web
+    name: precios-ne
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /docs
 ```
 
 ### Vercel (Frontend)
@@ -389,8 +409,9 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 Variables de entorno:
-- `DATABASE_URL` — Conexión a PostgreSQL en Railway
-- `NEXT_PUBLIC_API_URL` — URL del backend en Railway
+- `DATABASE_URL` — Conexión a Supabase (PostgreSQL) con `?ssl=require`
+- `CORS_ORIGINS` — Orígenes permitidos separados por coma
+- `NEXT_PUBLIC_API_URL` — URL pública del backend en Render
 
 ---
 
@@ -411,10 +432,10 @@ Variables de entorno:
 
 | Fase | Descripción | Estado |
 |------|-------------|--------|
-| **Fase 1** | Backend: modelo DB + scraper Damasco + endpoint search | ⏳ Pendiente |
-| **Fase 2** | Scrapers Multimax, Daka, Ivoo con Playwright | ⏳ Pendiente |
-| **Fase 3** | Frontend Next.js: página principal + resultados | ⏳ Pendiente |
-| **Fase 4** | Scheduler + caché + refinamientos + deploy | ⏳ Pendiente |
+| **Fase 1** | Backend: modelo DB + scraper Damasco + endpoint search | ✅ Completado |
+| **Fase 2** | Scrapers Multimax, Daka, Ivoo | ✅ Completado |
+| **Fase 3** | Frontend Next.js: página principal + resultados | ✅ Completado |
+| **Fase 4** | Scheduler (cron → sync/catalog) + caché + refinamientos + deploy | ✅ Completado |
 | **Fase 5** | Pruebas con usuarios en Nueva Esparta | ⏳ Pendiente |
 
 ---

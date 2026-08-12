@@ -90,12 +90,13 @@ def _parse_product(raw: dict) -> dict:
     image_url = None
     price = None
     list_price = None
+    images: list[str] = []
 
     items = raw.get("items", [])
     if items:
-        images = items[0].get("images", [])
+        images = [img.get("imageUrl") for img in items[0].get("images", []) if img.get("imageUrl")]
         if images:
-            image_url = images[0].get("imageUrl")
+            image_url = images[0]
 
         sellers = items[0].get("sellers", [])
         if sellers:
@@ -120,7 +121,9 @@ def _parse_product(raw: dict) -> dict:
         "name": product_name,
         "brand": brand,
         "category": category,
+        "description": raw.get("description") or None,
         "image_url": image_url,
+        "images": images,
         "product_url": product_url,
         "store": STORE_KEY,
         "store_name": STORE_NAME,

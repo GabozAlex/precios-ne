@@ -179,3 +179,61 @@ async def _scrape_httpx(url: str, max_results: int, query: str) -> list[dict[str
             break
 
     return results
+
+_DAKA_IMG_RE = re.compile(r"(.+?)(?:_\d+)?-[A-Za-z0-9]{16,}\.webp$", re.IGNORECASE)
+
+
+def _daka_decoded_src(src: str) -> str:
+    if src.startswith("/_next/image"):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(src).query)
+        return qs.get("url", [""])[0]
+    return src
+
+
+async def fetch_detail(product_url: str) -> tuple[str | None, list[str]]:
+    """Fetch a product detail page: description + image gallery."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            r = await client.get(product_url, headers=headers)
+            r.raise_for_status()
+    except Exception:
+        return None, []
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    description = None
+    for heading in soup.find_all(["h2", "h3", "h4"]):
+        if heading.get_text(strip=True).lower() == "descripción":
+            p = heading.find_next("p")
+            if p:
+                description = p.get_text(strip=True) or None
+            break
+
+    candidates: list[str] = []
+    for img in soup.select("img[src]"):
+        url = _daka_decoded_src(img.get("src", ""))
+        if _DAKA_IMG_RE.search(url) and not re.search(
+            r"BANNER|Group|Component|Frame|Vector|ARIA|logo|ssl|social|icon", url, re.IGNORECASE
+        ):
+            candidates.append(url)
+
+    images: list[str] = []
+    if candidates:
+        match = _DAKA_IMG_RE.search(candidates[0].split("/")[-1])
+        stem = match.group(1) if match else None
+        if stem:
+            for url in candidates:
+                base = url.split("/")[-1]
+                if (base.startswith(stem + "-") or base.startswith(stem + "_")) and url not in images:
+                    images.append(url)
+
+    return description, images

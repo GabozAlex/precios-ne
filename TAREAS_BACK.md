@@ -1,71 +1,78 @@
-# Tareas para el Backend (precios-ne)
+# Tareas del Backend (precios-ne) — Estado
 
-Estas tareas son requeridas por mejoras/pulidos del **frontend** y no pueden resolverse solo modificando el cliente.
+Todas las tareas documentadas originalmente fueron resueltas. Estado al 12/08/2026:
 
-## 1. Bug crítico: parsing de precios en Multimax (prioridad alta)
+## 1. Bug crítico: parsing de precios en Multimax ✅ Resuelto
 
 **Archivo:** `backend/app/scrapers/multimax.py` — función `_parse_price`
 
-**Problema:** en Venezuela los precios usan `.` como separador
-de miles y `,` como decimal (ej: `1.000,00`). El scraper reemplaza la
-coma **antes** de borrar los puntos, por lo que:
+Ahora quita los miles (`.`) **antes** de convertir la coma (`,`) en decimal,
+igual que `daka.py`:
 
-- Entrada: `"$1.000,00"`
-- Después de `.replace(",", ".")`: `"$1.000.00"`
-- Regex `(\d+\.?\d*)` atrapa `"1.000"` → `float("1.000")` = **1.0**
+- `"$1.000,00"` → `1000.0` (antes daba `1.0`)
+- `"1.000.000,50"` → `1000000.5`
+- `""` / `"Sin precio"` → `None`
 
-Cuando un producto cuesta **1.000,00 USD** se graba **1.00** y el
-frontend muestra **$1.00** en vez de **$1.000,00**.
+Cubierto por `backend/tests/test_parse_price.py`.
 
-**Fix esperado** (igual al scraper de Daka que ya funciona bien):
+## 2. Descripción y galería de imágenes ✅ Resuelto
 
-```python
-def _parse_price(text: str) -> float | None:
-    cleaned = text.replace("$", "").replace("BS.", "").replace("USD", "").replace(" ", "").strip()
-    if not cleaned:
-        return None
-    cleaned = cleaned.replace(".", "").replace(",", ".")  # borrar miles, coma->punto
-    match = re.search(r"(\d+\.?\d*)", cleaned)
-    if match:
-        return float(match.group(1))
-    return None
+- `products` ahora tiene columnas `images` (JSON, default `[]`) y `description` (Text).
+- **Damasco** (API VTEX) y **Ivoo** (GraphQL Magento): capturan `description` e
+  `images` directamente durante el scrape.
+- **Multimax** y **Daka**: sus páginas exigirían una request extra por producto,
+  por eso la captura es **perezosa**: `GET /api/products/{id}` visita la página
+  de detalle (`scrapers/*.py::fetch_detail`) y cachea `description` + `images`
+  en la DB.
+- La API expone `images` y `description` en:
+  - `/api/search`
+  - `/api/products`
+  - `/api/products/{id}`
+
+### Migración de base de datos (PRODUCCIÓN — importante)
+
+La DB de Render/Supabase ya existe con el esquema viejo. Antes de desplegar el
+nuevo código, correr UNA VEZ la migración:
+
+```bash
+cd backend
+DATABASE_URL="<TU_URL>?ssl=require" .venv/bin/alembic -c alembic.ini upgrade head
 ```
 
-> Nota: `daka.py` ya usa el orden correcto. `ivoo.py` recibe `value` numérico directamente de GraphQL, OK.
+La migración (`alembic/versions/0001_*.py`) solo agrega `images`/`description`.
+Bases nuevas no la necesitan (el `create_all` del arranque ya crea el esquema
+completo). No ejecutar `alembic upgrade` sobre una base recién creada por
+`create_all` (fallaría por columnas duplicadas).
 
-## 2. Exponer descripción y galería de imágenes (prioridad media)
+**Equivalente en SQL plano (Supabase):**
 
-**Archivo:** scrapers + `backend/app/models.py` + `backend/app/router.py`
+```sql
+-- ejecutar UNA vez contra la DB de producción
+ALTER TABLE products ADD COLUMN images JSON DEFAULT '[]';
+ALTER TABLE products ADD COLUMN description TEXT;
+```
 
-El frontend quiere abrir un modal de detalle de producto que muestre
-la **descripción** y **varias imágenes** del producto. Hoy en la DB
-solo se guarda `image_url` (una) y no hay descripción.
+Si prefieres no instalar Alembic en producción, el SQL de arriba es suficiente.
+En ese caso, no uses `alembic` después para otras migraciones o marcá la base
+como al día con `alembic stamp 0001`.
 
-**Cambios requeridos:**
+## 3. Sugerencias / autocompletado ✅ Resuelto
 
-1. **Scrapers** (`damasco.py`, `multimax.py`, `daka.py`, `ivoo.py`):
-   - Capturar una lista `images: list[str]` (galería).
-   - Capturar `description: str | None`.
+- `GET /api/suggest?q=...` → `{"suggestions": [...]}` (nombres distintos que
+  contienen `q`, 10 por defecto).
+- `SearchBar` del frontend usa el endpoint con debounce (300 ms) y dropdown.
 
-2. **`models.py`**:
-   - Tabla `products`: añadir columnas
-     - `images` → `Text` o JSON (PostgreSQL `ARRAY`/`JSON`), con default `[]`.
-     - `description` → `Text` nullable.
+## Mejoras adicionales resueltas
 
-3. **`router.py`**:
-   - `_upsert_scraper_results`: guardar `images` y `description`.
-   - `GET /api/products/{id}`: incluir `images` y `description` en la
-     respuesta JSON.
-   - `GET /api/products` y `GET /api/search`: incluir `images`/`description`
-     en `ProductOut` (el frontend los usa para el modal).
-
-## 3. (Opcional) Endpoint de sugerencias/autocompletado (prioridad baja)
-
-**Archivo:** `backend/app/router.py`
-
-El frontend podría añadir autocompletado al `SearchBar`. Requeriría:
-
-- `GET /api/suggest?q=...` → retorna lista de nombres de productos
-  distintos que empiecen con o contengan `q` (ej: 10 resultados).
-
-Esto mejora UX pero no es bloqueante.
+- **Paginación server** en `GET /api/products` (`limit`/`offset`) → responde
+  `{ total, page, page_size, products }`. El frontend de `/productos` pagina en
+  servidor (antes paginaba en cliente el catálogo completo).
+- **`StoreStatusBar` dinámico**: consume `GET /api/stores` y muestra el estado
+  real de cada tienda (gris = inactiva).
+- **Agrupación ligera entre tiendas**: `rapidfuzz` agrupa en tiempo de
+  búsqueda el mismo producto físico con nombres distintos (normaliza marca y
+  términos tipo "da+co"). Umbral WRatio ≥ 82, sin cambios de esquema.
+- **Limpieza**: eliminado el código fantasma `ivuu` en `router.py`.
+- **Tests**: `backend/tests/` (parsing de precios + clustering), 17 casos.
+- **Alembic**: setup en `backend/alembic/` (env async compatible con
+  `postgresql+asyncpg` y `sqlite+aiosqlite`).

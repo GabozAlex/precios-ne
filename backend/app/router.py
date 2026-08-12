@@ -1,8 +1,11 @@
 import asyncio
+import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc
+from rapidfuzz import fuzz
+from sqlalchemy import select, desc, exists, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -40,6 +43,74 @@ def _dedup_by_store(results: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _normalize_name(name: str) -> str:
+    text = (name or "").lower()
+    text = "".join(
+        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
+    )
+    for token in (
+        "damasco", "multimax", "tiendas daka", "daka", "ivoo",
+        "da+co", "da&co", "da co", "marca",
+    ):
+        text = text.replace(token, " ")
+    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+_CLUSTER_THRESHOLD = 82
+
+
+def _cluster_products(products: list["ProductOut"]) -> list["ProductOut"]:
+    """Agrupa el mismo producto físico (nombres similares) entre tiendas."""
+    clusters: list[dict] = []
+    for p in products:
+        norm = _normalize_name(p.name)
+        best_idx, best_score = -1, 0.0
+        for i, c in enumerate(clusters):
+            score = fuzz.WRatio(norm, c["norm"])
+            if score > best_score:
+                best_score, best_idx = score, i
+        if best_idx >= 0 and best_score >= _CLUSTER_THRESHOLD:
+            clusters[best_idx]["members"].append(p)
+        else:
+            clusters.append({"norm": norm, "members": [p]})
+
+    out: list[ProductOut] = []
+    for c in clusters:
+        best_by_store: dict[str, PriceOut] = {}
+        for m in c["members"]:
+            for price in m.prices:
+                existing = best_by_store.get(price.store)
+                if existing is None or (
+                    price.price_usd is not None
+                    and (existing.price_usd is None or price.price_usd < existing.price_usd)
+                ):
+                    best_by_store[price.store] = price
+        price_list = sorted(
+            best_by_store.values(),
+            key=lambda x: x.price_usd if x.price_usd is not None else float("inf"),
+        )
+        rep = min(
+            c["members"],
+            key=lambda m: m.best_price.price_usd
+            if m.best_price and m.best_price.price_usd is not None
+            else float("inf"),
+        )
+        out.append(ProductOut(
+            id=rep.id,
+            name=rep.name,
+            brand=rep.brand,
+            category=rep.category,
+            image_url=rep.image_url,
+            images=rep.images or [],
+            description=rep.description,
+            best_price=price_list[0] if price_list else None,
+            prices=price_list,
+        ))
+    return out
+
+
 async def _upsert_scraper_results(
     db: AsyncSession,
     all_results: list[dict],
@@ -51,18 +122,27 @@ async def _upsert_scraper_results(
         if price is None:
             continue
 
+        images = r.get("images") or []
+        description = r.get("description")
+
         product_stmt = select(Product).where(Product.name == r["name"]).limit(1)
         product_result = await db.execute(product_stmt)
         existing = product_result.scalar_one_or_none()
 
         if existing:
             product_id = existing.id
+            if images and not existing.images:
+                existing.images = images
+            if description and not existing.description:
+                existing.description = description
         else:
             new_product = Product(
                 name=r["name"],
                 brand=r.get("brand"),
                 category=r.get("category"),
                 image_url=r.get("image_url"),
+                images=images or [],
+                description=description,
             )
             db.add(new_product)
             await db.flush()
@@ -102,6 +182,8 @@ async def _upsert_scraper_results(
                 "brand": r.get("brand"),
                 "category": r.get("category"),
                 "image_url": r.get("image_url"),
+                "images": images or [],
+                "description": description,
                 "prices": [],
             }
         grouped[key]["prices"].append(r)
@@ -128,6 +210,8 @@ async def _upsert_scraper_results(
             brand=data["brand"],
             category=data["category"],
             image_url=data["image_url"],
+            images=data.get("images") or [],
+            description=data.get("description"),
             best_price=prices_out[0] if prices_out else None,
             prices=prices_out,
         ))
@@ -151,6 +235,8 @@ class ProductOut(BaseModel):
     brand: str | None
     category: str | None
     image_url: str | None
+    images: list[str] = []
+    description: str | None = None
     best_price: PriceOut | None
     prices: list[PriceOut]
 
@@ -161,6 +247,13 @@ class SearchResult(BaseModel):
     products: list[ProductOut]
     cached: bool
     scraped_at: str | None = None
+
+
+class ProductsPage(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    products: list[ProductOut]
 
 
 class StoreOut(BaseModel):
@@ -231,10 +324,13 @@ async def search(
                     brand=prod.brand,
                     category=prod.category,
                     image_url=prod.image_url,
+                    images=prod.images or [],
+                    description=prod.description,
                     best_price=prices_out[0] if prices_out else None,
                     prices=prices_out,
                 ))
 
+            out = _cluster_products(out)
             out.sort(key=lambda p: p.best_price.price_usd if p.best_price and p.best_price.price_usd is not None else float("inf"))
 
             return SearchResult(
@@ -264,53 +360,78 @@ async def search(
 
     all_results = _dedup_by_store(all_results)
     saved = await _upsert_scraper_results(db, all_results, now)
+    saved_products = _cluster_products(saved["products"])
+    saved_products.sort(
+        key=lambda p: p.best_price.price_usd
+        if p.best_price and p.best_price.price_usd is not None
+        else float("inf")
+    )
 
     return SearchResult(
         query=q,
-        total_results=saved["total"],
-        products=saved["products"],
+        total_results=len(saved_products),
+        products=saved_products,
         cached=False,
         scraped_at=now.isoformat(),
     )
 
 
-@router.get("/products", response_model=list[ProductOut])
+@router.get("/suggest")
+async def suggest(
+    q: str = Query(..., min_length=1, max_length=80, description="Prefijo/texto de búsqueda"),
+    limit: int = Query(10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Product.name)
+        .where(Product.name.ilike(f"%{q}%"))
+        .distinct()
+        .order_by(Product.name)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    names = result.scalars().all()
+    return {"suggestions": list(names)}
+
+
+@router.get("/products", response_model=ProductsPage)
 async def list_products(
     db: AsyncSession = Depends(get_db),
     q: str = Query("", description="Filtrar por nombre"),
     store: str = Query("", description="Filtrar por tienda (damasco, multimax, daka, ivoo)"),
+    limit: int = Query(50, ge=1, le=200, description="Tamaño de página"),
+    offset: int = Query(0, ge=0, description="Desplazamiento"),
 ):
-    stmt = (
+    prod_stmt = select(Product)
+    if q:
+        prod_stmt = prod_stmt.where(Product.name.ilike(f"%{q}%"))
+    if store:
+        prod_stmt = prod_stmt.where(
+            exists().where(and_(Price.product_id == Product.id, Price.store == store))
+        )
+
+    total = await db.scalar(select(func.count()).select_from(prod_stmt.subquery()))
+    total = int(total or 0)
+
+    prod_stmt = prod_stmt.order_by(Product.created_at.desc()).offset(offset).limit(limit)
+    products_result = await db.execute(prod_stmt)
+    products = products_result.scalars().all()
+
+    prices_stmt = (
         select(Price)
-        .join(Product)
+        .where(Price.product_id.in_([p.id for p in products]))
         .order_by(Price.price_usd)
     )
-    if q:
-        stmt = stmt.where(Product.name.ilike(f"%{q}%"))
-    if store:
-        stmt = stmt.where(Price.store == store)
-    result = await db.execute(stmt)
-    prices = result.scalars().all()
-
-    product_ids = list(set(p.product_id for p in prices))
-    products_stmt = select(Product).where(Product.id.in_(product_ids))
-    products_result = await db.execute(products_stmt)
-    products = products_result.scalars().all()
-    product_map = {p.id: p for p in products}
+    prices_result = await db.execute(prices_stmt)
+    prices = prices_result.scalars().all()
 
     grouped: dict = {}
     for price in prices:
-        prod = product_map.get(price.product_id)
-        if not prod:
-            continue
-        if prod.id not in grouped:
-            grouped[prod.id] = {"product": prod, "prices": []}
-        grouped[prod.id]["prices"].append(price)
+        grouped.setdefault(price.product_id, []).append(price)
 
     out = []
-    for pid, data in grouped.items():
-        prod = data["product"]
-        price_list = sorted(data["prices"], key=lambda x: x.price_usd or 0)
+    for prod in products:
+        price_list = sorted(grouped.get(prod.id, []), key=lambda x: x.price_usd or 0)
         prices_out = [
             PriceOut(
                 store=p.store,
@@ -328,12 +449,18 @@ async def list_products(
             brand=prod.brand,
             category=prod.category,
             image_url=prod.image_url,
+            images=prod.images or [],
+            description=prod.description,
             best_price=prices_out[0] if prices_out else None,
             prices=prices_out,
         ))
 
-    out.sort(key=lambda p: p.best_price.price_usd if p.best_price and p.best_price.price_usd is not None else float("inf"))
-    return out
+    return ProductsPage(
+        total=total,
+        page=offset // limit + 1 if limit else 1,
+        page_size=limit,
+        products=out,
+    )
 
 
 @router.get("/products/{product_id}")
@@ -361,12 +488,29 @@ async def get_product(product_id: str, db: AsyncSession = Depends(get_db)):
     history_result = await db.execute(history_stmt)
     history = history_result.scalars().all()
 
+    store = prices[0].store if prices else None
+    if store in ("multimax", "daka") and (not product.images or not product.description):
+        scraper = multimax if store == "multimax" else daka
+        url = next((p.product_url for p in prices), None)
+        if url:
+            try:
+                description, images = await scraper.fetch_detail(url)
+                if description and not product.description:
+                    product.description = description
+                if images and not product.images:
+                    product.images = images
+                await db.commit()
+            except Exception:
+                pass
+
     return {
         "id": str(product.id),
         "name": product.name,
         "brand": product.brand,
         "category": product.category,
         "image_url": product.image_url,
+        "images": product.images or [],
+        "description": product.description,
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "current_prices": [
             {
@@ -440,7 +584,7 @@ async def sync_catalog(
         "damasco": lambda: damasco.fetch_catalog(2000),
         "multimax": lambda: multimax.fetch_catalog(4000),
         "daka": lambda: daka.fetch_catalog(2000),
-        "ivoo": lambda: ivuu.fetch_catalog(1000) if 'ivuu' in globals() else ivoo.fetch_catalog(1000),
+        "ivoo": lambda: ivoo.fetch_catalog(1000),
     }
 
     tasks = [scrapers_map[s]() for s in targets]

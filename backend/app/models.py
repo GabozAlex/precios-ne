@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Text, Boolean, Numeric, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import String, Text, Boolean, Numeric, DateTime, ForeignKey, UniqueConstraint, JSON, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
@@ -14,6 +14,8 @@ class Product(Base):
     brand: Mapped[str | None] = mapped_column(String(200))
     category: Mapped[str | None] = mapped_column(String(200))
     image_url: Mapped[str | None] = mapped_column(Text)
+    images: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     prices: Mapped[list["Price"]] = relationship(back_populates="product", cascade="all, delete-orphan")
