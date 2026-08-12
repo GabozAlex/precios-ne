@@ -1,4 +1,5 @@
 import SearchBar from '@/components/SearchBar'
+import StoreStatusBar from '@/components/StoreStatusBar'
 import Link from 'next/link'
 
 export default function Home() {
@@ -14,6 +15,8 @@ export default function Home() {
           <strong>Daka</strong> e <strong>Ivoo</strong> en Nueva Esparta.
         </p>
       </div>
+
+      <StoreStatusBar />
 
       <SearchBar />
 

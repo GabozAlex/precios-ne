@@ -6,4 +6,4 @@ __pycache__/
 .next/
 node_modules/
 VARIABLES_RENDER.txt
-tsbuildinfo
+*.tsbuildinfo
