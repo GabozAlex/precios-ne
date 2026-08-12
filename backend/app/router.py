@@ -13,6 +13,109 @@ from .scrapers import damasco, multimax, daka, ivoo
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+def _parse_price(raw_price) -> float | None:
+    try:
+        return float(raw_price)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _upsert_scraper_results(
+    db: AsyncSession,
+    all_results: list[dict],
+    now: datetime,
+) -> dict:
+    grouped: dict[str, dict] = {}
+    for r in all_results:
+        price = _parse_price(r.get("price_usd"))
+        if price is None:
+            continue
+
+        product_stmt = select(Product).where(Product.name == r["name"]).limit(1)
+        product_result = await db.execute(product_stmt)
+        existing = product_result.scalar_one_or_none()
+
+        if existing:
+            product_id = existing.id
+        else:
+            new_product = Product(
+                name=r["name"],
+                brand=r.get("brand"),
+                category=r.get("category"),
+                image_url=r.get("image_url"),
+            )
+            db.add(new_product)
+            await db.flush()
+            product_id = new_product.id
+
+        await db.execute(
+            Price.__table__.delete().where(
+                Price.product_id == product_id,
+                Price.store == r["store"],
+            )
+        )
+
+        price_entry = Price(
+            product_id=product_id,
+            store=r["store"],
+            store_name=r["store_name"],
+            price_usd=price,
+            product_url=r.get("product_url"),
+            in_stock=r.get("in_stock", True),
+            scraped_at=now,
+        )
+        db.add(price_entry)
+
+        history_entry = PriceHistory(
+            product_id=product_id,
+            store=r["store"],
+            price_usd=price,
+            recorded_at=now,
+        )
+        db.add(history_entry)
+
+        key = str(product_id)
+        if key not in grouped:
+            grouped[key] = {
+                "id": key,
+                "name": r["name"],
+                "brand": r.get("brand"),
+                "category": r.get("category"),
+                "image_url": r.get("image_url"),
+                "prices": [],
+            }
+        grouped[key]["prices"].append(r)
+
+    await db.commit()
+
+    out_products = []
+    for pid, data in grouped.items():
+        price_list = sorted(data["prices"], key=lambda x: _parse_price(x.get("price_usd")) or 0)
+        prices_out = [
+            PriceOut(
+                store=p["store"],
+                store_name=p["store_name"],
+                price_usd=_parse_price(p.get("price_usd")),
+                product_url=p.get("product_url"),
+                in_stock=p.get("in_stock", True),
+                scraped_at=now.isoformat(),
+            )
+            for p in price_list
+        ]
+        out_products.append(ProductOut(
+            id=data["id"],
+            name=data["name"],
+            brand=data["brand"],
+            category=data["category"],
+            image_url=data["image_url"],
+            best_price=prices_out[0] if prices_out else None,
+            prices=prices_out,
+        ))
+
+    out_products.sort(key=lambda p: p.best_price.price_usd if p.best_price and p.best_price.price_usd is not None else float("inf"))
+    return {"products": out_products, "total": len(out_products)}
+
+
 class PriceOut(BaseModel):
     store: str
     store_name: str
@@ -139,98 +242,12 @@ async def search(
     if store:
         all_results = [r for r in all_results if r.get("store") == store]
 
-    grouped: dict[str, dict] = {}
-    for r in all_results:
-        if r["price_usd"] is None:
-            continue
-
-        product_stmt = select(Product).where(Product.name == r["name"]).limit(1)
-        product_result = await db.execute(product_stmt)
-        existing = product_result.scalar_one_or_none()
-
-        if existing:
-            product_id = existing.id
-        else:
-            new_product = Product(
-                name=r["name"],
-                brand=r["brand"],
-                category=r["category"],
-                image_url=r["image_url"],
-            )
-            db.add(new_product)
-            await db.flush()
-            product_id = new_product.id
-
-        await db.execute(
-            Price.__table__.delete().where(
-                Price.product_id == product_id,
-                Price.store == r["store"],
-            )
-        )
-
-        price_entry = Price(
-            product_id=product_id,
-            store=r["store"],
-            store_name=r["store_name"],
-            price_usd=r["price_usd"],
-            product_url=r["product_url"],
-            in_stock=r["in_stock"],
-            scraped_at=now,
-        )
-        db.add(price_entry)
-
-        history_entry = PriceHistory(
-            product_id=product_id,
-            store=r["store"],
-            price_usd=r["price_usd"],
-            recorded_at=now,
-        )
-        db.add(history_entry)
-
-        key = str(product_id)
-        if key not in grouped:
-            grouped[key] = {
-                "id": key,
-                "name": r["name"],
-                "brand": r["brand"],
-                "category": r["category"],
-                "image_url": r["image_url"],
-                "prices": [],
-            }
-        grouped[key]["prices"].append(r)
-
-    out_products = []
-    for pid, data in grouped.items():
-        price_list = sorted(data["prices"], key=lambda x: x["price_usd"] or 0)
-        prices_out = [
-            PriceOut(
-                store=p["store"],
-                store_name=p["store_name"],
-                price_usd=p["price_usd"],
-                product_url=p["product_url"],
-                in_stock=p["in_stock"],
-                scraped_at=now.isoformat(),
-            )
-            for p in price_list
-        ]
-        out_products.append(ProductOut(
-            id=data["id"],
-            name=data["name"],
-            brand=data["brand"],
-            category=data["category"],
-            image_url=data["image_url"],
-            best_price=prices_out[0] if prices_out else None,
-            prices=prices_out,
-        ))
-
-    await db.commit()
-
-    out_products.sort(key=lambda p: p.best_price.price_usd if p.best_price and p.best_price.price_usd is not None else float("inf"))
+    saved = await _upsert_scraper_results(db, all_results, now)
 
     return SearchResult(
         query=q,
-        total_results=len(out_products),
-        products=out_products,
+        total_results=saved["total"],
+        products=saved["products"],
         cached=False,
         scraped_at=now.isoformat(),
     )
@@ -382,7 +399,56 @@ async def list_stores(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.post("/refresh")
-async def refresh_prices(db: AsyncSession = Depends(get_db)):
+@router.post("/sync/catalog")
+async def sync_catalog(db: AsyncSession = Depends(get_db)):
     now = datetime.now(timezone.utc)
-    return {"message": "Refresco iniciado", "timestamp": now.isoformat()}
+
+    syncs = await asyncio.gather(
+        damasco.fetch_catalog(2000),
+        multimax.fetch_catalog(4000),
+        daka.fetch_catalog(2000),
+        ivoo.fetch_catalog(1000),
+        return_exceptions=True,
+    )
+
+    store_names = {"damasco": "Damasco", "multimax": "Multimax", "daka": "Daka", "ivoo": "Ivoo"}
+    store_websites = {
+        "damasco": "https://www.damascovzla.com",
+        "multimax": "https://multimax.com.ve",
+        "daka": "https://tiendasdaka.com/ve",
+        "ivoo": "https://www.ivoo.com",
+    }
+    all_results: list[dict] = []
+    summary: dict[str, int] = {}
+
+    for res, store_key in zip(syncs, ("damasco", "multimax", "daka", "ivoo")):
+        if isinstance(res, Exception):
+            summary[store_key] = 0
+            continue
+        all_results.extend(res)
+        summary[store_key] = len(res)
+
+    saved = await _upsert_scraper_results(db, all_results, now)
+
+    for store_key in summary:
+        stmt = select(Store).where(Store.id == store_key)
+        result = await db.execute(stmt)
+        store = result.scalar_one_or_none()
+        if store:
+            store.last_scrape = now
+        else:
+            db.add(Store(
+                id=store_key,
+                name=store_names[store_key],
+                website=store_websites[store_key],
+                active=True,
+                last_scrape=now,
+            ))
+    await db.commit()
+
+    return {
+        "message": "Catálogo sincronizado",
+        "timestamp": now.isoformat(),
+        "stores": summary,
+        "total_products": saved["total"],
+    }

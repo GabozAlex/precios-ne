@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { listProducts, type ProductResult } from '@/lib/api'
+import { listProducts, syncCatalog, type ProductResult } from '@/lib/api'
 
 const STORE_COLORS: Record<string, string> = {
   damasco: 'bg-store-damasco',
@@ -18,6 +18,8 @@ const STORE_LABELS: Record<string, string> = {
   daka: 'Daka',
   ivoo: 'Ivoo',
 }
+
+const PAGE_SIZE = 24
 
 function formatPrice(price: number | null) {
   if (price === null) return '—'
@@ -104,37 +106,82 @@ function ProductosContent() {
   const [products, setProducts] = useState<ProductResult[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true)
     listProducts('', storeParam)
       .then(setProducts)
       .catch(() => setProducts([]))
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    setPage(1)
+    load()
   }, [storeParam])
 
   const filtered = filter
     ? products.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
     : products
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  const handleSync = () => {
+    setSyncing(true)
+    setSyncMsg(null)
+    syncCatalog()
+      .then((res) => {
+        setSyncMsg(
+          `Catálogo actualizado: ${res.total_products} productos (` +
+            Object.entries(res.stores || {})
+              .map(([k, v]) => `${STORE_LABELS[k] || k}: ${v}`)
+              .join(', ') +
+            ')'
+        )
+      })
+      .catch((err) => setSyncMsg(`Error al actualizar: ${err.message}`))
+      .finally(() => {
+        setSyncing(false)
+        load()
+      })
+  }
+
   return (
     <div>
       <div className="mb-6">
-        <Link href="/" className="text-blue-600 hover:underline text-sm">
-          &larr; Inicio
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link href="/" className="text-blue-600 hover:underline text-sm">
+            &larr; Inicio
+          </Link>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {syncing ? 'Actualizando…' : 'Actualizar ahora'}
+          </button>
+        </div>
         <h2 className="text-2xl font-bold mt-2">
           {storeParam
             ? `Productos de ${STORE_LABELS[storeParam] || storeParam}`
             : 'Todos los productos'}
         </h2>
+        {syncMsg && <p className="text-sm text-gray-600 mt-2">{syncMsg}</p>}
       </div>
 
       <input
         type="text"
         placeholder="Filtrar productos..."
         value={filter}
-        onChange={(e) => setFilter(e.target.value)}
+        onChange={(e) => {
+          setFilter(e.target.value)
+          setPage(1)
+        }}
         className="w-full border border-gray-300 rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
       />
 
@@ -160,7 +207,7 @@ function ProductosContent() {
             {filtered.length} producto{filtered.length !== 1 ? 's' : ''}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {filtered.map((product) => (
+            {paged.map((product) => (
               <ProductCard key={product.id} product={product} />
             ))}
           </div>
@@ -169,8 +216,29 @@ function ProductosContent() {
               <p className="text-gray-500">
                 {filter
                   ? `No hay productos que coincidan con "${filter}"`
-                  : 'No hay productos en la base de datos. Realizá una búsqueda primero.'}
+                  : 'No hay productos en la base de datos. Realizá una búsqueda o presioná "Actualizar ahora".'}
               </p>
+            </div>
+          )}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 mt-6">
+              <button
+                onClick={() => setPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm disabled:opacity-40"
+              >
+                &larr; Anterior
+              </button>
+              <span className="text-sm text-gray-600">
+                Página {currentPage} de {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm disabled:opacity-40"
+              >
+                Siguiente &rarr;
+              </button>
             </div>
           )}
         </>

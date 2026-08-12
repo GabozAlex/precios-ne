@@ -8,6 +8,25 @@ STORE_KEY = "multimax"
 SEARCH_URL = "https://multimax.com.ve/buscar?q={query}"
 BASE_URL = "https://multimax.com.ve"
 
+CATALOG_URLS = [
+    "https://multimax.com.ve/aires-acondicionados",
+    "https://multimax.com.ve/audio-y-tv",
+    "https://multimax.com.ve/calzado",
+    "https://multimax.com.ve/celulares-y-tablets",
+    "https://multimax.com.ve/cocina",
+    "https://multimax.com.ve/cuidado-personal",
+    "https://multimax.com.ve/electrodomesticos",
+    "https://multimax.com.ve/ferreteria",
+    "https://multimax.com.ve/hogar",
+    "https://multimax.com.ve/lavado",
+    "https://multimax.com.ve/lenceria-de-hogar",
+    "https://multimax.com.ve/oportunidades",
+    "https://multimax.com.ve/refrigeracion",
+    "https://multimax.com.ve/tecnologia",
+    "https://multimax.com.ve/televisores",
+    "https://multimax.com.ve/variedades",
+]
+
 
 async def search_products(query: str, max_results: int = 50) -> list[dict[str, Any]]:
     base_url = SEARCH_URL.format(query=query.replace(" ", "+"))
@@ -26,6 +45,31 @@ async def search_products(query: str, max_results: int = 50) -> list[dict[str, A
                 break
             results.extend(batch)
             page += 1
+        return results[:max_results]
+    except Exception:
+        return []
+
+
+async def fetch_catalog(max_results: int = 4000) -> list[dict[str, Any]]:
+    try:
+        results: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+
+        for base_url in CATALOG_URLS:
+            if len(results) >= max_results:
+                break
+            page = 1
+            while len(results) < max_results:
+                url = f"{base_url}?page={page}"
+                batch = await _scrape_httpx(url, max_results - len(results))
+                new_batch = [p for p in batch if p["name"] not in seen_names]
+                for p in new_batch:
+                    seen_names.add(p["name"])
+                results.extend(new_batch)
+                if not new_batch or len(batch) == 0:
+                    break
+                page += 1
+
         return results[:max_results]
     except Exception:
         return []

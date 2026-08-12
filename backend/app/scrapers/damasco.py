@@ -36,6 +36,32 @@ async def search_products(query: str, max_results: int = 50) -> list[dict[str, A
     return [_parse_product(p) for p in products[:max_results]]
 
 
+async def fetch_catalog(max_results: int = 2000) -> list[dict[str, Any]]:
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+
+    products: list[dict] = []
+    offset = 0
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while len(products) < max_results:
+            params = {"_from": offset, "_to": offset + 49}
+            r = await client.get(DAMASCO_API, params=params, headers=headers)
+            r.raise_for_status()
+            batch: list[dict] = r.json()
+            if not batch:
+                break
+            products.extend(batch)
+            offset += 50
+
+    return [_parse_product(p) for p in products[:max_results]]
+
+
 STORE_URL = "https://www.damascovzla.com"
 
 

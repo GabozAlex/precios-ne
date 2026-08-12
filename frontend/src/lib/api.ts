@@ -64,3 +64,11 @@ export async function getStores() {
   if (!res.ok) throw new Error(`Error ${res.status}`)
   return res.json()
 }
+
+export async function syncCatalog() {
+  const res = await fetch(`${API_URL}/api/sync/catalog`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(`Error ${res.status}`)
+  return res.json()
+}

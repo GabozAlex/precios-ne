@@ -1,4 +1,5 @@
 """Daka scraper: extract products from SSR search results page, filter by query."""
+import asyncio
 import re
 import unicodedata
 import urllib.parse
@@ -11,6 +12,19 @@ STORE_KEY = "daka"
 STORE_URL = "https://tiendasdaka.com/ve"
 BASE_URL = "https://tiendasdaka.com"
 RESULTS_URL = "https://tiendasdaka.com/ve/results/{slug}?q={query}"
+
+CATALOG_URLS = [
+    "https://tiendasdaka.com/ve/store/aires-y-ventilacion",
+    "https://tiendasdaka.com/ve/store/audio-y-video",
+    "https://tiendasdaka.com/ve/store/deportes-y-aire-libre",
+    "https://tiendasdaka.com/ve/store/electrodomesticos",
+    "https://tiendasdaka.com/ve/store/equipaje-y-accesorios",
+    "https://tiendasdaka.com/ve/store/ferreteria",
+    "https://tiendasdaka.com/ve/store/hogar-y-muebles",
+    "https://tiendasdaka.com/ve/store/juguetes-y-hobbies",
+    "https://tiendasdaka.com/ve/store/oficina-y-papeleria",
+    "https://tiendasdaka.com/ve/store/tecnologia",
+]
 
 
 def _slugify(query: str) -> str:
@@ -54,6 +68,32 @@ async def search_products(query: str, max_results: int = 50) -> list[dict[str, A
                 break
             results.extend(batch)
             page += 1
+        return results[:max_results]
+    except Exception:
+        return []
+
+
+async def fetch_catalog(max_results: int = 2000) -> list[dict[str, Any]]:
+    try:
+        results: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+
+        for base_url in CATALOG_URLS:
+            if len(results) >= max_results:
+                break
+            page = 1
+            while len(results) < max_results:
+                url = f"{base_url}?page={page}"
+                batch = await _scrape_httpx(url, max_results - len(results), "")
+                new_batch = [p for p in batch if p["name"] not in seen_names]
+                for p in new_batch:
+                    seen_names.add(p["name"])
+                results.extend(new_batch)
+                if not new_batch or len(batch) == 0:
+                    break
+                page += 1
+                await asyncio.sleep(0.5)
+
         return results[:max_results]
     except Exception:
         return []
