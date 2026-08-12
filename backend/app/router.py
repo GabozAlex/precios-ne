@@ -123,10 +123,10 @@ async def search(
             )
 
     scraper_results = await asyncio.gather(
-        damasco.search_products(q),
-        multimax.search_products(q),
-        daka.search_products(q),
-        ivoo.search_products(q),
+        damasco.search_products(q, 50),
+        multimax.search_products(q, 50),
+        daka.search_products(q, 50),
+        ivoo.search_products(q, 50),
         return_exceptions=True,
     )
 

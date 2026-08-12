@@ -9,11 +9,24 @@ SEARCH_URL = "https://multimax.com.ve/buscar?q={query}"
 BASE_URL = "https://multimax.com.ve"
 
 
-async def search_products(query: str, max_results: int = 24) -> list[dict[str, Any]]:
-    url = SEARCH_URL.format(query=query.replace(" ", "+"))
+async def search_products(query: str, max_results: int = 50) -> list[dict[str, Any]]:
+    base_url = SEARCH_URL.format(query=query.replace(" ", "+"))
 
     try:
-        return await _scrape_httpx(url, max_results)
+        results: list[dict[str, Any]] = []
+        page = 1
+        while len(results) < max_results:
+            url = f"{base_url}&page={page}"
+            batch = await _scrape_httpx(url, max_results - len(results))
+            if not batch:
+                break
+            seen = {p["name"] for p in results}
+            batch = [p for p in batch if p["name"] not in seen]
+            if not batch:
+                break
+            results.extend(batch)
+            page += 1
+        return results[:max_results]
     except Exception:
         return []
 

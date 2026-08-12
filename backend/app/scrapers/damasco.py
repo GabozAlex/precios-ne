@@ -6,12 +6,7 @@ STORE_NAME = "Damasco"
 STORE_KEY = "damasco"
 
 
-async def search_products(query: str, max_results: int = 24) -> list[dict[str, Any]]:
-    params = {
-        "q": query,
-        "_from": 0,
-        "_to": max_results - 1,
-    }
+async def search_products(query: str, max_results: int = 50) -> list[dict[str, Any]]:
     headers = {
         "Accept": "application/json",
         "User-Agent": (
@@ -21,12 +16,24 @@ async def search_products(query: str, max_results: int = 24) -> list[dict[str, A
         ),
     }
 
+    products: list[dict] = []
+    offset = 0
     async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.get(DAMASCO_API, params=params, headers=headers)
-        r.raise_for_status()
-        products: list[dict] = r.json()
+        while len(products) < max_results:
+            params = {
+                "q": query,
+                "_from": offset,
+                "_to": offset + 49,
+            }
+            r = await client.get(DAMASCO_API, params=params, headers=headers)
+            r.raise_for_status()
+            batch: list[dict] = r.json()
+            if not batch:
+                break
+            products.extend(batch)
+            offset += 50
 
-    return [_parse_product(p) for p in products]
+    return [_parse_product(p) for p in products[:max_results]]
 
 
 STORE_URL = "https://www.damascovzla.com"

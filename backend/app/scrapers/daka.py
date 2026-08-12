@@ -34,14 +34,27 @@ def _parse_price(text: str) -> float | None:
     return None
 
 
-async def search_products(query: str, max_results: int = 24) -> list[dict[str, Any]]:
-    url = RESULTS_URL.format(
+async def search_products(query: str, max_results: int = 50) -> list[dict[str, Any]]:
+    base_url = RESULTS_URL.format(
         slug=_slugify(query),
         query=urllib.parse.quote(query),
     )
 
     try:
-        return await _scrape_httpx(url, max_results, query)
+        results: list[dict[str, Any]] = []
+        page = 1
+        while len(results) < max_results:
+            url = f"{base_url}&page={page}"
+            batch = await _scrape_httpx(url, max_results - len(results), query)
+            if not batch:
+                break
+            seen = {p["name"] for p in results}
+            batch = [p for p in batch if p["name"] not in seen]
+            if not batch:
+                break
+            results.extend(batch)
+            page += 1
+        return results[:max_results]
     except Exception:
         return []
 
