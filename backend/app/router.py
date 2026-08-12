@@ -421,17 +421,11 @@ async def list_stores(db: AsyncSession = Depends(get_db)):
 
 
 @router.api_route("/sync/catalog", methods=["GET", "POST"])
-async def sync_catalog(db: AsyncSession = Depends(get_db)):
+async def sync_catalog(
+    store: str = Query("", description="Sincronizar una sola tienda (damasco, multimax, daka, ivoo)"),
+    db: AsyncSession = Depends(get_db),
+):
     now = datetime.now(timezone.utc)
-
-    syncs = await asyncio.gather(
-        damasco.fetch_catalog(2000),
-        multimax.fetch_catalog(4000),
-        daka.fetch_catalog(2000),
-        ivoo.fetch_catalog(1000),
-        return_exceptions=True,
-    )
-
     store_names = {"damasco": "Damasco", "multimax": "Multimax", "daka": "Daka", "ivoo": "Ivoo"}
     store_websites = {
         "damasco": "https://www.damascovzla.com",
@@ -439,10 +433,23 @@ async def sync_catalog(db: AsyncSession = Depends(get_db)):
         "daka": "https://tiendasdaka.com/ve",
         "ivoo": "https://www.ivoo.com",
     }
+
+    targets = [store] if store in store_names else list(store_names.keys())
+
+    scrapers_map = {
+        "damasco": lambda: damasco.fetch_catalog(2000),
+        "multimax": lambda: multimax.fetch_catalog(4000),
+        "daka": lambda: daka.fetch_catalog(2000),
+        "ivoo": lambda: ivuu.fetch_catalog(1000) if 'ivuu' in globals() else ivoo.fetch_catalog(1000),
+    }
+
+    tasks = [scrapers_map[s]() for s in targets]
+    syncs = await asyncio.gather(*tasks, return_exceptions=True)
+
     all_results: list[dict] = []
     summary: dict[str, int] = {}
 
-    for res, store_key in zip(syncs, ("damasco", "multimax", "daka", "ivoo")):
+    for res, store_key in zip(syncs, targets):
         if isinstance(res, Exception):
             summary[store_key] = 0
             continue
@@ -455,9 +462,9 @@ async def sync_catalog(db: AsyncSession = Depends(get_db)):
     for store_key in summary:
         stmt = select(Store).where(Store.id == store_key)
         result = await db.execute(stmt)
-        store = result.scalar_one_or_none()
-        if store:
-            store.last_scrape = now
+        s_obj = result.scalar_one_or_none()
+        if s_obj:
+            s_obj.last_scrape = now
         else:
             db.add(Store(
                 id=store_key,
@@ -469,7 +476,7 @@ async def sync_catalog(db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     return {
-        "message": "Catálogo sincronizado",
+        "message": f"Catálogo sincronizado{f' para {store}' if store else ''}",
         "timestamp": now.isoformat(),
         "stores": summary,
         "total_products": saved["total"],
