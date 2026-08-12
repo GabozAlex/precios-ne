@@ -166,7 +166,7 @@ export default function ProductModal({ product, onClose }: ProductModalProps) {
                   )}
                   {!loading && !error && !detail?.description && (
                     <p className="text-xs text-gray-400">
-                      (El backend aún no expone la descripción de este producto)
+                      (Descripción no disponible)
                     </p>
                   )}
                 </div>
