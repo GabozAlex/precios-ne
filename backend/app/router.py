@@ -399,7 +399,7 @@ async def list_stores(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.post("/sync/catalog")
+@router.api_route("/sync/catalog", methods=["GET", "POST"])
 async def sync_catalog(db: AsyncSession = Depends(get_db)):
     now = datetime.now(timezone.utc)
 
