@@ -143,10 +143,6 @@ function ProductosContent() {
 export default function ProductosPage() {
   return (
     <div>
-      <div className="mb-6">
-        <Link href="/" className="text-blue-600 hover:underline text-sm">&larr; Inicio</Link>
-        <h2 className="text-2xl font-bold mt-2">Productos</h2>
-      </div>
       <Suspense fallback={
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-4">
           {[1, 2, 3, 4, 5, 6].map((i) => (
