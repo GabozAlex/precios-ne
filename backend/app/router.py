@@ -20,6 +20,26 @@ def _parse_price(raw_price) -> float | None:
         return None
 
 
+def _dedup_by_store(results: list[dict]) -> list[dict]:
+    best: dict[tuple[str, str], dict] = {}
+    for r in results:
+        if not r.get("price_usd"):
+            continue
+        key = (r.get("name", ""), r.get("store", ""))
+        existing = best.get(key)
+        if existing is None:
+            best[key] = r
+        else:
+            try:
+                cur = float(existing.get("price_usd", 0) or 0)
+                new = float(r.get("price_usd", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if new < cur:
+                best[key] = r
+    return list(best.values())
+
+
 async def _upsert_scraper_results(
     db: AsyncSession,
     all_results: list[dict],
@@ -242,6 +262,7 @@ async def search(
     if store:
         all_results = [r for r in all_results if r.get("store") == store]
 
+    all_results = _dedup_by_store(all_results)
     saved = await _upsert_scraper_results(db, all_results, now)
 
     return SearchResult(
@@ -428,6 +449,7 @@ async def sync_catalog(db: AsyncSession = Depends(get_db)):
         all_results.extend(res)
         summary[store_key] = len(res)
 
+    all_results = _dedup_by_store(all_results)
     saved = await _upsert_scraper_results(db, all_results, now)
 
     for store_key in summary:
