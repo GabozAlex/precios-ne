@@ -13,16 +13,10 @@ export interface ProductResult {
   brand: string | null
   category: string | null
   image_url: string | null
+  images?: string[]
+  description?: string | null
   best_price: PriceInfo | null
   prices: PriceInfo[]
-}
-
-export interface SearchResponse {
-  query: string
-  total_results: number
-  products: ProductResult[]
-  cached: boolean
-  scraped_at: string | null
 }
 
 export interface StoreInfo {
@@ -31,6 +25,21 @@ export interface StoreInfo {
   website: string
   active: boolean
   last_scrape: string | null
+}
+
+export interface ProductsPage {
+  total: number
+  page: number
+  page_size: number
+  products: ProductResult[]
+}
+
+export interface SearchResponse {
+  query: string
+  total_results: number
+  products: ProductResult[]
+  cached: boolean
+  scraped_at: string | null
 }
 
 export interface CatalogSyncResponse {

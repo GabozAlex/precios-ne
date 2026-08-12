@@ -182,9 +182,10 @@ export default function ProductModal({ product, onClose }: ProductModalProps) {
               <div className="space-y-3">
                 {Object.entries(historyByStore).map(([storeKey, entries]) => {
                   const meta = getStoreMeta(storeKey)
-                  const valid = entries.filter((e) => e.price != null)
-                  const min = Math.min(...valid.map((e) => e.price!))
-                  const max = Math.max(...valid.map((e) => e.price!))
+                  const bars = entries.filter((e) => e.price != null)
+                  if (bars.length === 0) return null
+                  const min = Math.min(...bars.map((e) => e.price!))
+                  const max = Math.max(...bars.map((e) => e.price!))
 
                   return (
                     <div key={storeKey} className="space-y-1">
@@ -193,25 +194,32 @@ export default function ProductModal({ product, onClose }: ProductModalProps) {
                         <span className="text-sm font-medium">{meta.label}</span>
                       </div>
                       <div className="flex items-end gap-1 h-16">
-                        {entries.slice(0, 12).map((e, i) => {
+                        {bars.slice(0, 12).map((e, i) => {
                           const height =
-                            max === min ? 100 : ((e.price ?? min) - min) / (max - min) * 100
+                            max === min ? 100 : ((e.price! - min) / (max - min)) * 100
+                          const date = new Date(e.date)
+                          const isValidDate = !isNaN(date.getTime())
+                          const dateLabel = isValidDate
+                            ? date.toLocaleDateString('es-VE', { month: 'short', day: 'numeric' })
+                            : ''
+                          const title = `${formatPriceRow(e.price)}${
+                            isValidDate ? ` · ${date.toLocaleDateString('es-VE')}` : ''
+                          }`
                           return (
                             <div
                               key={i}
                               className="flex-1 min-w-[32px] flex flex-col justify-end"
-                              title={`${formatPriceRow(e.price)} · ${e.date}`}
+                              title={title}
                             >
                               <div
-                                className={`w-full rounded-t ${meta.colorClass.replace('bg-', 'bg-').replace('-500', '-400')} opacity-70`}
+                                className={`w-full rounded-t ${meta.colorClass} opacity-70`}
                                 style={{ height: `${height}%`, minHeight: '4px' }}
                               />
-                              <span className="text-[8px] text-gray-400 mt-1 truncate">
-                                {new Date(e.date).toLocaleDateString('es-VE', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                })}
-                              </span>
+                              {dateLabel && (
+                                <span className="text-[8px] text-gray-400 mt-1 truncate">
+                                  {dateLabel}
+                                </span>
+                              )}
                             </div>
                           )
                         })}

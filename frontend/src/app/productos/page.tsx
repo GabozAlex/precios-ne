@@ -16,16 +16,25 @@ const PAGE_SIZE = 24
 function ProductosContent() {
   const searchParams = useSearchParams()
   const storeParam = (searchParams.get('store') || '') as StoreKey
-  const { products, loading, error, load } = useProducts()
-  const [filter, setFilter] = useState('')
+  const { products, total, loading, error, load } = useProducts()
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [page, setPage] = useState(1)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ(q), 300)
+    return () => clearTimeout(timer)
+  }, [q])
+
+  useEffect(() => {
     setPage(1)
-    load('', storeParam)
-  }, [storeParam, load])
+  }, [storeParam])
+
+  useEffect(() => {
+    load(debouncedQ.trim(), storeParam, PAGE_SIZE, (page - 1) * PAGE_SIZE)
+  }, [debouncedQ, storeParam, page, load])
 
   const handleSync = async () => {
     setSyncing(true)
@@ -40,17 +49,12 @@ function ProductosContent() {
       setSyncMsg(`Error al actualizar: ${err instanceof Error ? err.message : 'desconocido'}`)
     } finally {
       setSyncing(false)
-      load('', storeParam)
+      load(q.trim(), storeParam, PAGE_SIZE, (page - 1) * PAGE_SIZE)
     }
   }
 
-  const filtered = filter
-    ? products.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
-    : products
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
-  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   return (
     <div>
@@ -78,9 +82,9 @@ function ProductosContent() {
       <input
         type="search"
         placeholder="Filtrar productos..."
-        value={filter}
+        value={q}
         onChange={(e) => {
-          setFilter(e.target.value)
+          setQ(e.target.value)
           setPage(1)
         }}
         className="w-full border border-gray-300 rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -88,23 +92,23 @@ function ProductosContent() {
 
       {loading && <LoadingSkeleton count={6} variant="grid" />}
 
-      {error && <ErrorState message={error} onRetry={() => load('', storeParam)} />}
+      {error && <ErrorState message={error} onRetry={() => load(q.trim(), storeParam, PAGE_SIZE, (page - 1) * PAGE_SIZE)} />}
 
       {!loading && !error && (
         <>
           <p className="text-sm text-gray-500 mb-4">
-            {filtered.length} producto{filtered.length !== 1 ? 's' : ''}
+            {total} producto{total !== 1 ? 's' : ''}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {paged.map((product) => (
+            {products.map((product) => (
               <ProductCard key={product.id} product={product} compact />
             ))}
           </div>
-          {filtered.length === 0 && (
+          {total === 0 && (
             <div className="text-center py-16">
               <p className="text-gray-500">
-                {filter
-                  ? `No hay productos que coincidan con "${filter}"`
+                {q
+                  ? `No hay productos que coincidan con "${q}"`
                   : 'No hay productos en la base de datos. Realizá una búsqueda o presioná "Actualizar ahora".'}
               </p>
             </div>

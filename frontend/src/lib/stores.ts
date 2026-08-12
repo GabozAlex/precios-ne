@@ -4,13 +4,6 @@ export type { StoreKey }
 
 export const STORE_KEYS: StoreKey[] = ['damasco', 'multimax', 'daka', 'ivoo']
 
-export const STORE_LABELS: Record<StoreKey, string> = {
-  damasco: 'Damasco',
-  multimax: 'Multimax',
-  daka: 'Daka',
-  ivoo: 'Ivoo',
-}
-
 export const STORE_WEBSITES: Record<StoreKey, string> = {
   damasco: 'https://www.damascovzla.com',
   multimax: 'https://multimax.com.ve',

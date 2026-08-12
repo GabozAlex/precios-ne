@@ -7,7 +7,6 @@ const config: Config = {
   theme: {
       extend: {
         colors: {
-          'best-price': '#16a34a',
           'store-damasco': '#e11d48',
           'store-damasco-foreground': '#7f1d1d',
           'store-multimax': '#2563eb',

@@ -20,6 +20,7 @@ interface StoreIconProps {
   size?: 'sm' | 'md'
   showDot?: boolean
   showLabel?: boolean
+  active?: boolean
 }
 
 export default function StoreIcon({
@@ -27,6 +28,7 @@ export default function StoreIcon({
   size = 'md',
   showDot = true,
   showLabel = false,
+  active = true,
 }: StoreIconProps) {
   const meta: StoreMeta = getStoreMeta(store)
   const storeKey = (meta.key as StoreKey) ?? null
@@ -34,8 +36,17 @@ export default function StoreIcon({
     sm: 'w-4 h-4 shrink-0',
     md: 'w-6 h-6 shrink-0',
   }
-  const dotClass = storeKey ? STORE_DOT_CLASSES[storeKey] : 'bg-gray-400 ring-2 ring-gray-200'
-  const labelClass = storeKey ? `${STORE_LABEL_CLASSES[storeKey]}` : 'text-gray-700'
+  const isActive = active !== false
+  const dotClass = !isActive
+    ? 'bg-gray-300 ring-2 ring-gray-200'
+    : storeKey
+    ? STORE_DOT_CLASSES[storeKey]
+    : 'bg-gray-400 ring-2 ring-gray-200'
+  const labelClass = !isActive
+    ? 'text-gray-400'
+    : storeKey
+    ? `${STORE_LABEL_CLASSES[storeKey]}`
+    : 'text-gray-700'
 
   return (
     <div className="inline-flex items-center gap-1.5">

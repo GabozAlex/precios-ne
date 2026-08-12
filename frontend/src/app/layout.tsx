@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -16,9 +17,9 @@ export default function RootLayout({
       <body className="bg-gray-50 text-gray-900 min-h-screen">
         <header className="bg-white border-b border-gray-200">
           <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
-            <a href="/" className="text-2xl font-bold text-blue-600">
+            <Link href="/" className="text-2xl font-bold text-blue-600">
               PreciosNE
-            </a>
+            </Link>
             <span className="text-sm text-gray-500 hidden sm:inline">
               Comparador de precios · Nueva Esparta
             </span>

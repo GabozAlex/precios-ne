@@ -18,7 +18,7 @@ function ResultadosContent() {
   const [modalProduct, setModalProduct] = useState<ProductResult | null>(null)
 
   useEffect(() => {
-    if (q && !data && !loading) {
+    if (q && (!data || data.query !== q) && !loading) {
       search(q)
     }
   }, [q, data, loading, search])
@@ -34,7 +34,8 @@ function ResultadosContent() {
     )
   }
 
-  const isLoadingInitial = (loading || !data) && products.length === 0
+  const isInitialLoading = (loading || !data) && products.length === 0
+  const isRefreshing = loading && !isInitialLoading
 
   return (
     <div>
@@ -47,20 +48,26 @@ function ResultadosContent() {
             Resultados para: <span className="text-blue-600">{q}</span>
           </h2>
         </div>
-        <button
+<button
           onClick={() => search(q, true)}
-          className="text-sm text-blue-600 hover:text-blue-800 font-medium underline"
+          disabled={isRefreshing}
+          className="text-sm text-blue-600 hover:text-blue-800 font-medium underline disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Actualizar precios
+          {isRefreshing ? 'Actualizando…' : 'Actualizar precios'}
         </button>
       </div>
 
-      {isLoadingInitial && <LoadingSkeleton count={3} variant="list" />}
+      {isInitialLoading && <LoadingSkeleton count={3} variant="list" />}
 
-      {!isLoadingInitial && error && <ErrorState message={error} onRetry={() => search(q)} />}
+      {!isInitialLoading && error && products.length === 0 && (
+        <ErrorState message={error} onRetry={() => search(q)} />
+      )}
 
-      {!isLoadingInitial && !error && (
+      {!isInitialLoading && !(error && products.length === 0) && (
         <>
+          {error && products.length > 0 && (
+            <p className="text-sm text-red-600 mb-4">{error}</p>
+          )}
           <p className="text-sm text-gray-500 mb-4">
             {products.length} producto{products.length !== 1 ? 's' : ''} encontrado
             {products.length !== 1 ? 's' : ''}
@@ -78,21 +85,21 @@ function ResultadosContent() {
               </p>
             </div>
           ) : (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {products.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onViewDetails={() => setModalProduct(product)}
-            />
-          ))}
-        </div>
-      )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {products.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onViewDetails={() => setModalProduct(product)}
+                />
+              ))}
+            </div>
+          )}
 
-      {modalProduct && (
-        <ProductModal product={modalProduct} onClose={() => setModalProduct(null)} />
-      )}
-    </>
+          {modalProduct && (
+            <ProductModal product={modalProduct} onClose={() => setModalProduct(null)} />
+          )}
+        </>
       )}
     </div>
   )

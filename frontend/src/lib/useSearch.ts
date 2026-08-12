@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { searchProducts } from '@/lib/api'
 import type { SearchResponse } from '@/lib/types'
 
@@ -14,19 +14,32 @@ export function useSearch() {
     loading: false,
     error: null,
   })
+  const controllerRef = useRef<AbortController | null>(null)
 
   const search = useCallback(async (q: string, forceRefresh = false) => {
     if (!q) return
-    setState({ data: null, loading: true, error: null })
+
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
+
+    setState((prev) => ({
+      data: forceRefresh && prev.data?.query === q ? prev.data : null,
+      loading: true,
+      error: null,
+    }))
+
     try {
-      const data = await searchProducts(q, forceRefresh)
+      const data = await searchProducts(q, forceRefresh, '', controller.signal)
+      if (controller.signal.aborted) return
       setState({ data, loading: false, error: null })
     } catch (err) {
-      setState({
-        data: null,
+      if (controller.signal.aborted) return
+      setState((prev) => ({
+        data: prev.data,
         loading: false,
         error: err instanceof Error ? err.message : 'Error inesperado',
-      })
+      }))
     }
   }, [])
 
