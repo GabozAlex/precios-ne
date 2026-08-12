@@ -362,7 +362,7 @@ async def list_stores(db: AsyncSession = Depends(get_db)):
         default_stores = [
             Store(id="damasco", name="Damasco", website="https://www.damascovzla.com", active=True),
             Store(id="multimax", name="Multimax", website="https://multimax.com.ve", active=True),
-            Store(id="daka", name="Daka", website="https://daka.tiendasdaka.com", active=True),
+            Store(id="daka", name="Daka", website="https://tiendasdaka.com/ve", active=True),
             Store(id="ivoo", name="Ivoo", website="https://www.ivoo.com", active=True),
         ]
         for s in default_stores:
