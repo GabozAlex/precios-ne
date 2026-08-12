@@ -1,16 +1,33 @@
-"""Daka scraper: extract products from SSR store page, filter by query."""
+"""Daka scraper: extract products from SSR search results page, filter by query."""
 import re
+import unicodedata
+import urllib.parse
+import httpx
 from bs4 import BeautifulSoup
 from typing import Any
 
 STORE_NAME = "Daka"
 STORE_KEY = "daka"
-STORE_URL = "https://daka.tiendasdaka.com/ve/store"
-BASE_URL = "https://daka.tiendasdaka.com"
+STORE_URL = "https://tiendasdaka.com/ve"
+BASE_URL = "https://tiendasdaka.com"
+RESULTS_URL = "https://tiendasdaka.com/ve/results/{slug}?q={query}"
+
+
+def _slugify(query: str) -> str:
+    return (
+        unicodedata.normalize("NFD", query.lower())
+        .encode("ascii", "ignore")
+        .decode()
+        .strip()
+        .replace(".", "")
+    )
 
 
 def _parse_price(text: str) -> float | None:
-    cleaned = text.replace("US$", "").replace(",", "").replace(" ", "")
+    cleaned = text.replace("US$", "").replace("Bs.", "").replace(" ", "").strip()
+    if not cleaned:
+        return None
+    cleaned = cleaned.replace(".", "").replace(",", ".")
     match = re.search(r"(\d+\.?\d*)", cleaned)
     if match:
         return float(match.group(1))
@@ -18,88 +35,94 @@ def _parse_price(text: str) -> float | None:
 
 
 async def search_products(query: str, max_results: int = 24) -> list[dict[str, Any]]:
-    from playwright.async_api import async_playwright
+    url = RESULTS_URL.format(
+        slug=_slugify(query),
+        query=urllib.parse.quote(query),
+    )
 
-    browser = None
     try:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1920, "height": 1080})
-
-            await page.goto(STORE_URL, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(3000)
-
-            html = await page.content()
-            soup = BeautifulSoup(html, "lxml")
-            results = []
-            seen = set()
-
-            wrappers = soup.select('[data-testid="product-wrapper"]')
-
-            for wrapper in wrappers:
-                links = wrapper.select("a[href*='/ve/products/']")
-                if len(links) < 2:
-                    continue
-
-                name_link = links[1]
-                brand_el = name_link.select_one("p")
-                name_el = name_link.select_one("p:last-child")
-                name = name_el.get_text(strip=True) if name_el else name_link.get_text(strip=True)
-                brand = brand_el.get_text(strip=True) if brand_el else ""
-
-                if not name or len(name) < 3:
-                    continue
-
-                if query.lower() not in name.lower():
-                    continue
-
-                if name in seen:
-                    continue
-                seen.add(name)
-
-                img_link = links[0]
-                img = img_link.select_one("img")
-                image_url = ""
-                if img:
-                    src = img.get("src", "")
-                    if src.startswith("/_next/image"):
-                        import urllib.parse
-                        parsed = urllib.parse.urlparse(src)
-                        qs = urllib.parse.parse_qs(parsed.query)
-                        image_url = qs.get("url", [""])[0]
-                    elif src:
-                        image_url = src
-
-                href = name_link.get("href", "")
-                product_url = href if href.startswith("http") else f"{BASE_URL}{href}"
-
-                price_el = wrapper.select_one('[data-testid="price"]')
-                price = _parse_price(price_el.get_text()) if price_el else None
-
-                if price is not None:
-                    results.append({
-                        "name": name,
-                        "brand": brand,
-                        "category": "",
-                        "image_url": image_url,
-                        "product_url": product_url,
-                        "store": STORE_KEY,
-                        "store_name": STORE_NAME,
-                        "price_usd": price,
-                        "list_price_usd": None,
-                        "in_stock": True,
-                    })
-
-                    if len(results) >= max_results:
-                        break
-
-            return results
-
+        return await _scrape_httpx(url, max_results, query)
     except Exception:
         return []
-    finally:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
+
+
+async def _scrape_httpx(url: str, max_results: int, query: str) -> list[dict[str, Any]]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html",
+    }
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        r = await client.get(url, headers=headers)
+        r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "lxml")
+    results = []
+    seen = set()
+
+    wrappers = soup.select('[data-testid="product-wrapper"]')
+
+    for wrapper in wrappers:
+        links = wrapper.select("a[href*='/ve/products/']")
+        if len(links) < 2:
+            continue
+
+        name_link = links[1]
+        spans = name_link.select("span")
+        brand = spans[0].get_text(strip=True) if spans else ""
+        name = spans[1].get_text(strip=True) if len(spans) > 1 else name_link.get_text(strip=True)
+
+        if not name or len(name) < 3:
+            continue
+
+        name_lower = name.lower()
+        tokens = [t for t in query.lower().split() if t]
+        if any(t not in name_lower for t in tokens):
+            continue
+
+        if name in seen:
+            continue
+        seen.add(name)
+
+        img_link = links[0]
+        img = img_link.select_one("img")
+        image_url = ""
+        if img:
+            src = img.get("src", "")
+            if src.startswith("/_next/image"):
+                parsed = urllib.parse.urlparse(src)
+                qs = urllib.parse.parse_qs(parsed.query)
+                image_url = qs.get("url", [""])[0]
+            elif src:
+                image_url = src
+
+        href = name_link.get("href", "")
+        product_url = href if href.startswith("http") else f"{BASE_URL}{href}"
+
+        price_el = wrapper.select_one('[data-testid="price"]')
+        price = _parse_price(price_el.get_text()) if price_el else None
+
+        if price is None:
+            continue
+
+        results.append({
+            "name": name,
+            "brand": brand,
+            "category": "",
+            "image_url": image_url,
+            "product_url": product_url,
+            "store": STORE_KEY,
+            "store_name": STORE_NAME,
+            "price_usd": price,
+            "list_price_usd": None,
+            "in_stock": True,
+        })
+
+        if len(results) >= max_results:
+            break
+
+    return results
